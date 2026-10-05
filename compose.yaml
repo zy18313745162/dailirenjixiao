@@ -1,0 +1,11 @@
+services:
+  banduo-web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - banduo-data:/app/data
+volumes:
+  banduo-data:

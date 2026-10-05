@@ -1,0 +1,8 @@
+{
+  "name": "banduo-hotel-agent-performance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "瓣朵酒店代理人绩效结算网页系统",
+  "scripts": { "start": "node --disable-warning=ExperimentalWarning server.js", "test": "node --test" },
+  "engines": { "node": ">=22.5.0" }
+}
