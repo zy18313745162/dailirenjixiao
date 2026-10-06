@@ -30,6 +30,30 @@ test('front-end shell and protected routes are served', async t => {
   assert.equal(unauthenticated.response.status, 401);
 });
 
+test('self registration remains pending until an administrator approves it', async t => {
+  const { request, login } = await setup(t);
+  const signup = await request('/api/register', { method: 'POST', body: JSON.stringify({
+    name: '新代理人', username: 'newagent', password: 'Agent-password-2026!'
+  }) });
+  assert.equal(signup.response.status, 201);
+  assert.match(signup.body.message, /等待酒店管理员审核/);
+  assert.equal((await login('newagent', 'Agent-password-2026!')).response.status, 401);
+
+  const admin = await login('owner', 'A-very-strong-test-password-2026');
+  const list = await request('/api/agents', { cookie: admin.cookie });
+  const pending = list.body.agents.find(agent => agent.username === 'newagent');
+  assert.ok(pending);
+  assert.equal(pending.active, 0);
+
+  const approved = await request(`/api/agents/${pending.id}`, { method: 'PUT', cookie: admin.cookie, csrf: admin.csrf,
+    body: JSON.stringify({ active: true }) });
+  assert.equal(approved.response.status, 200);
+  assert.equal((await login('newagent', 'Agent-password-2026!')).response.status, 200);
+  assert.equal((await request('/api/register', { method: 'POST', body: JSON.stringify({
+    name: '重复账号', username: 'newagent', password: 'Agent-password-2026!'
+  }) })).response.status, 409);
+});
+
 test('order commissions, re-ranking, individual/month-wide rates, CSRF and settlement freeze', async t => {
   const { request, login } = await setup(t);
   const auth = await login('owner', 'A-very-strong-test-password-2026');
@@ -122,3 +146,4 @@ test('month and money validation rejects malformed input', async t => {
     body: JSON.stringify({ agentId: agent.body.id, code: 'BAD-DATE', amount: 5, acceptedAt: '2026-02-30T10:00' }) });
   assert.equal(impossibleDate.response.status, 400);
 });
+

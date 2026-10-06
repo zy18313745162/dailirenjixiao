@@ -91,6 +91,7 @@ function createApplication(options = {}) {
   const db = new DatabaseSync(dbPath);
   initialize(db, options);
   const loginFailures = new Map();
+  const registrationAttempts = new Map();
 
   function audit(actor, action, detail = '') {
     db.prepare('INSERT INTO audit_log(actor_id,actor_name,action,detail,created_at) VALUES(?,?,?,?,?)')
@@ -174,6 +175,23 @@ function createApplication(options = {}) {
     if (url.pathname.startsWith('/api/') && method !== 'GET' && !isSameOrigin(req)) return json(res, 403, { error: '来源校验失败' });
     try {
       if (url.pathname === '/api/health' && method === 'GET') return json(res, 200, { ok: true });
+      if (url.pathname === '/api/register' && method === 'POST') {
+        const key = req.socket.remoteAddress || 'unknown';
+        const windowStart = Date.now() - 60 * 60 * 1000;
+        const recent = (registrationAttempts.get(key) || []).filter(at => at > windowStart);
+        if (recent.length >= 5) return json(res, 429, { error: '注册次数过多，请稍后再试或联系管理员' });
+        recent.push(Date.now());
+        registrationAttempts.set(key, recent);
+        const body = await readBody(req), username = String(body.username || '').trim();
+        const name = String(body.name || '').trim(), password = String(body.password || '');
+        if (!/^[A-Za-z0-9_.-]{3,32}$/.test(username) || !name || name.length > 60 || password.length < 12 || password.length > 200) {
+          return json(res, 400, { error: '账号需 3–32 位英文/数字；姓名必填；密码需 12–200 位' });
+        }
+        const { salt, hash } = passwordHash(password), id = crypto.randomUUID();
+        db.prepare('INSERT INTO users(id,username,display_name,role,password_salt,password_hash,active,created_at) VALUES(?,?,?,?,?,?,0,?)')
+          .run(id, username, name, 'agent', salt, hash, new Date().toISOString());
+        return json(res, 201, { ok: true, message: '注册申请已提交，请等待酒店管理员审核后登录' });
+      }
       if (url.pathname === '/api/login' && method === 'POST') {
         const body = await readBody(req);
         const key = req.socket.remoteAddress || 'unknown';
@@ -279,6 +297,17 @@ function createApplication(options = {}) {
         if (actor.role !== 'admin') return json(res, 403, { error: '仅管理员可查看代理人账户' });
         return json(res, 200, { agents: db.prepare("SELECT id,username,display_name,active,created_at FROM users WHERE role='agent' ORDER BY display_name").all() });
       }
+      const agentMatch = url.pathname.match(/^\/api\/agents\/([\w-]+)$/);
+      if (agentMatch && method === 'PUT') {
+        if (actor.role !== 'admin') return json(res, 403, { error: '仅管理员可审核代理人注册' });
+        const target = db.prepare("SELECT id,username,display_name,active FROM users WHERE id=? AND role='agent'").get(agentMatch[1]);
+        if (!target) return json(res, 404, { error: '代理人不存在' });
+        const body = await readBody(req);
+        if (body.active !== true && body.active !== false) return json(res, 400, { error: '账号状态无效' });
+        db.prepare('UPDATE users SET active=? WHERE id=?').run(body.active ? 1 : 0, target.id);
+        audit(actor, `${body.active ? '通过' : '停用'}代理人账号 ${target.display_name}`, `登录名 ${target.username}`);
+        return json(res, 200, { ok: true, active: body.active });
+      }
       if (url.pathname === '/api/agents' && method === 'POST') {
         if (actor.role !== 'admin') return json(res, 403, { error: '仅管理员可创建代理人账户' });
         const body = await readBody(req), username = String(body.username || '').trim(), name = String(body.name || '').trim(), password = String(body.password || '');
@@ -339,3 +368,4 @@ if (require.main === module) {
   app.server.listen(port, process.env.HOST || '127.0.0.1', () => console.log(`瓣朵酒店绩效系统已启动: http://${process.env.HOST || '127.0.0.1'}:${port}`));
 }
 module.exports = { createApplication };
+
